@@ -1,92 +1,13 @@
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useState} from 'react';
 import {Button} from '@/components/ui/button.tsx';
 import {Label} from '@/components/ui/label.tsx';
 import {Input} from '@/components/ui/input.tsx';
 import {useMutation} from '@tanstack/react-query';
-
-function throwIfNotOk(fetchCall: Promise<Response>) {
-	return fetchCall
-		.then((response) => {
-			return response.text()
-				.then(text => {
-					if (!response.ok) {
-						throw new Error(text);
-					}
-
-					return text
-				});
-		})
-}
-
-type Game = {
-	State: 'SETUP' | 'PLAYING' | 'GAME_OVER',
-	Turn: 'PLAYER_1' | 'PLAYER_2',
-	Board: Array<'PLAYER_1' | 'PLAYER_2' | 'EMPTY'>
-}
-
-const Board = (props: { game: Game, disabled: boolean, activePosition: number, onPositionClicked: (position: number) => void }) => {
-	const circleStyle = 'rounded-full border border-black h-24 w-24 cursor-pointer hover:bg-gray-300';
-
-	const Circle = ({ position }: { position: number }) => {
-		const player1Styling = 'bg-blue-300';
-		const player2Styling = 'bg-purple-300';
-		const activeStyling = 'border-4 border-red-700'
-
-		const handleClick = () => {
-			props.onPositionClicked(position);
-		};
-
-		return (
-			<button
-				className={`${circleStyle} ${props.game.Board[position] === 'PLAYER_1' ? player1Styling : props.game.Board[position] === 'PLAYER_2' ? player2Styling : ''} ${props.activePosition === position && activeStyling}`}
-				disabled={props.disabled}
-				onClick={handleClick}
-			></button>
-		);
-	};
-
-	return (
-		<div className="grid grid-cols-9 grid-rows-9 gap-4 w-4xl">
-			<div className="col-span-4"></div>
-			<Circle position={1} />
-			<div className="col-span-4"></div>
-
-			<div className="col-span-9"></div>
-
-			<div className="col-span-2"></div>
-			<Circle position={8} />
-			<div className="col-span-3"></div>
-			<Circle position={2} />
-			<div className="col-span-2"></div>
-
-			<div className="col-span-9"></div>
-
-			<Circle position={7} />
-			<div className="col-span-3"></div>
-			<Circle position={0} />
-			<div className="col-span-3"></div>
-			<Circle position={3} />
-
-			<div className="col-span-9"></div>
-
-			<div className="col-span-2"></div>
-			<Circle position={6} />
-			<div className="col-span-3"></div>
-			<Circle position={4} />
-			<div className="col-span-2"></div>
-
-			<div className="col-span-9"></div>
-
-			<div className="col-span-4"></div>
-			<Circle position={5} />
-			<div className="col-span-4"></div>
-		</div>
-	)
-};
+import {throwIfNotOk} from '@/utils.ts';
+import {Board} from '@/Board.tsx';
+import type {Game} from '@/types.ts';
 
 export function App() {
-	const ws = useRef<WebSocket>(null);
-
 	const [wsStatus, setWsStatus] = useState<{ state: 'LOADING' | 'CONNECTED' | 'CLOSED' } | {
 		state: 'ERROR',
 		error: any
