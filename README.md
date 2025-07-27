@@ -25,3 +25,14 @@ A player may not:
 - Move more than one space
 - Land on a space with a piece already on it
 - Knock a piece off a space
+
+# Development
+I have been developing this project with Node 24.4.1 and Go 1.23.11, so your mileage may vary with earlier versions.
+
+To run this app, navigate into the `backend` directory, and run `go mod tidy` to download all Go-related dependencies.
+Once complete, run `go run main.go` to get the WebSocket server started.
+
+To start the frontend, navigate to the `frontend` directory and run `npm i` to install all related dependencies.
+Once complete, run `npm run dev` to get the server started.
+
+Unless configured otherwise, the app shall now be running at `http://localhost:5173`, with the Go HTTP/WebSocket server started on `http://localhost:8080` and `ws://localhost:8080` respectively.
