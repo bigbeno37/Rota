@@ -1,32 +1,32 @@
 [variables]
+# Set any environment variables needed
 NODE_ENV = "production"
 
+# Configure the build phases
 [phases.setup]
 nixPkgs = ['nodejs-18_x', 'go']
 
-[phases.frontend-install]
-workDir = "frontend"
+[phases.install]
+# Only include necessary files for dependency installation to optimize caching
 onlyIncludeFiles = [
-    "package.json",
-    "package-lock.json"
+    "frontend/package.json",
+    "frontend/package-lock.json", # or "pnpm-lock.yaml" if using pnpm
+    "backend/go.mod",
+    "backend/go.sum"
 ]
-cmds = ["npm install"]
-
-[phases.backend-install]
-workDir = "backend"
-onlyIncludeFiles = [
-    "go.mod",
-    "go.sum"
+# Install frontend dependencies
+cmds = [
+    "cd frontend && npm install", # or "pnpm install" if using pnpm
+    "cd backend && go mod download"
 ]
-cmds = ["go mod download"]
 
-[phases.frontend-build]
-workDir = "frontend"
-cmds = ["npm run build"]
-
-[phases.backend-build]
-workDir = "backend"
-cmds = ["go build -o app ."]
+[phases.build]
+# Build the frontend first, then the Go backend
+cmds = [
+    "cd frontend && npm run build",  # This should build Vite into the backend's dist directory
+    "cd backend && go build -o app ."
+]
 
 [start]
+# Start the Go server which will serve both the API and static files
 cmd = "./backend/app"
