@@ -16,15 +16,15 @@ onlyIncludeFiles = [
 ]
 # Install frontend dependencies
 cmds = [
-    "cd frontend && npm install && cd ..", # or "pnpm install" if using pnpm
+    "npm --prefix ./frontend install", # or "pnpm install" if using pnpm
     "cd backend && go mod download && cd .."
 ]
 
 [phases.build]
 # Build the frontend first, then the Go backend
 cmds = [
-    "cd frontend && npm run build && cd ..",  # This should build Vite into the backend's dist directory
-    "cd backend && go build -o app . && cd .."
+    "npm --prefix ./frontend run build",  # This should build Vite into the backend's dist directory
+    "go build -o ./backend/app -C ./backend ."
 ]
 
 [start]
