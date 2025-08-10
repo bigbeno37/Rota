@@ -116,25 +116,29 @@ export function App() {
 
 	if (playerState === 'MAIN_MENU') {
 		return (
-			<div className="flex flex-col gap-8 w-[900px] m-4">
-				{createLobbyMutation.isError && <p>{''+createLobbyMutation.error}</p>}
-				<Button
-					variant="outline"
-					disabled={disableControls}
-					onClick={handleCreateLobbyClicked}
-				>
-					Create Lobby
-				</Button>
-				<div className="flex flex-col gap-2">
-					<Label htmlFor="lobby-id">Lobby ID: </Label>
-					<Input
-						id="lobby-id"
-						type="text"
+			<div className="flex flex-col items-center justify-center w-full h-full">
+				<div className="flex flex-col gap-8 w-[900px]">
+					<span className="text-center text-4xl">Rota</span>
+					{createLobbyMutation.isError && <p>{'' + createLobbyMutation.error}</p>}
+					<Button
+						variant="outline"
 						disabled={disableControls}
-						value={lobbyId ?? ''}
-						onChange={e => setLobbyId(e.target.value)}
-					/>
-					<Button disabled={disableControls || !lobbyId} onClick={handleJoinLobbyClicked}>Join Lobby</Button>
+						onClick={handleCreateLobbyClicked}
+					>
+						Create Lobby
+					</Button>
+					<div className="flex flex-col gap-2">
+						<Label htmlFor="lobby-id">Lobby ID: </Label>
+						<Input
+							id="lobby-id"
+							type="text"
+							disabled={disableControls}
+							value={lobbyId ?? ''}
+							onChange={e => setLobbyId(e.target.value)}
+						/>
+						<Button disabled={disableControls || !lobbyId} onClick={handleJoinLobbyClicked}>Join
+							Lobby</Button>
+					</div>
 				</div>
 			</div>
 		);
@@ -150,9 +154,11 @@ export function App() {
 				{!game && (<p>Waiting for opponent to join. Lobby ID is: {lobbyId}</p>)}
 				{game && (<>
 					<p>This is the {game.State} phase.</p>
-					{game.State === 'PLAYING' ? (<p>It is {game.Turn}'s turn.</p>) : game.State === 'GAME_OVER' ? (<p>{game.Turn} won!</p>) : null}
+					{game.State === 'PLAYING' ? (<p>It is {game.Turn}'s turn.</p>) : game.State === 'GAME_OVER' ? (
+						<p>{game.Turn} won!</p>) : null}
 
-					{makeMoveMutation.isError && <p className="text-red-700">Invalid move! {''+makeMoveMutation.error}</p>}
+					{makeMoveMutation.isError &&
+                        <p className="text-red-700">Invalid move! {'' + makeMoveMutation.error}</p>}
 					{makeMoveMutation.isPending && <p>Submitting move...</p>}
 					<Board
 						disabled={makeMoveMutation.isPending}

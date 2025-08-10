@@ -20,12 +20,18 @@ func main() {
 	authenticatedMux.HandleFunc("POST /api/leave-lobby", leaveLobbyHandler)
 	authenticatedMux.HandleFunc("POST /api/make-move", makeMoveHandler)
 
+	staticFilesHandler := http.FileServer(http.Dir("dist"))
+
 	mainMux := http.NewServeMux()
 	mainMux.HandleFunc("/ws", wsHandler)
 	mainMux.Handle(
 		"/",
 		CreateStack(getCookieMiddleware)(authenticatedMux),
 	)
+
+	authenticatedMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		staticFilesHandler.ServeHTTP(w, r)
+	})
 
 	fmt.Println("WebSocket server listening on port 8080!")
 	log.Fatal(http.ListenAndServe(

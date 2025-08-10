@@ -13,7 +13,7 @@ export const useWS = (onMessage: (message: LobbyEventMessage) => void) => {
 	}>({state: 'LOADING'});
 
 	useEffect(() => {
-		const connection = new WebSocket('ws://localhost:8080/ws');
+		const connection = new WebSocket('/ws');
 
 		connection.addEventListener('open', () => setWsStatus({state: 'CONNECTED'}));
 		connection.addEventListener('error', e => setWsStatus({state: 'ERROR', error: e}));
