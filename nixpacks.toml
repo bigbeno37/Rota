@@ -14,6 +14,7 @@ onlyIncludeFiles = [
     "backend/go.mod",
     "backend/go.sum"
 ]
+cacheDirectories = ["frontend/node_modules"]
 # Install frontend dependencies
 cmds = [
     "npm --prefix ./frontend install", # or "pnpm install" if using pnpm
