@@ -6,28 +6,17 @@ import {useMutation} from '@tanstack/react-query';
 import {throwIfNotOk} from '@/utils.ts';
 import {Board} from '@/Board.tsx';
 import type {Game} from '@/types.ts';
+import {useWS} from '@/hooks/useWS.ts';
 
 export function App() {
-	const [wsStatus, setWsStatus] = useState<{ state: 'LOADING' | 'CONNECTED' | 'CLOSED' } | {
-		state: 'ERROR',
-		error: any
-	}>({state: 'LOADING'});
 	const [game, setGame] = useState<Game | null>(null);
-
-	useEffect(() => {
-		const connection = new WebSocket('ws://localhost:8080/ws');
-
-		connection.addEventListener('open', () => setWsStatus({state: 'CONNECTED'}));
-		connection.addEventListener('error', e => setWsStatus({state: 'ERROR', error: e}));
-		connection.addEventListener('message', e => {
-			console.log('Received WS message', e.data);
-
-			setGame(JSON.parse(e.data));
-		});
-		connection.addEventListener('close', () => {
-			setWsStatus({ state: 'CLOSED' });
-		})
-	}, []);
+	const wsStatus = useWS(message => {
+		if (message.Event === 'GAME_UPDATE') {
+			setGame(message.Game);
+		} else if (message.Event === 'OPPONENT_LEFT') {
+			setGame(null);
+		}
+	})
 
 	const [playerState, setPlayerState] = useState<'MAIN_MENU' | 'IN_LOBBY'>('MAIN_MENU');
 	const [lobbyId, setLobbyId] = useState<string | null>(null);
@@ -97,6 +86,22 @@ export function App() {
 		setActivePosition(-1);
 	}, [game]);
 
+	const leaveLobbyMutation = useMutation({
+		mutationFn: () => {
+			return throwIfNotOk(fetch('/api/leave-lobby', {
+				method: 'POST'
+			}))
+		},
+		onSuccess: () => {
+			setGame(null);
+			setPlayerState('MAIN_MENU');
+		}
+	});
+
+	const handleLeaveLobbyClicked = () => {
+		leaveLobbyMutation.mutate();
+	}
+
 	if (wsStatus.state === 'LOADING') {
 		return <p>Loading...</p>;
 	}
@@ -136,11 +141,17 @@ export function App() {
 	} else if (playerState === 'IN_LOBBY') {
 		return (
 			<>
+				<Button
+					disabled={leaveLobbyMutation.isPending}
+					onClick={handleLeaveLobbyClicked}
+				>
+					Leave game
+				</Button>
 				{!game && (<p>Waiting for opponent to join. Lobby ID is: {lobbyId}</p>)}
 				{game && (<>
-					<p>{JSON.stringify(game)}</p>
 					<p>This is the {game.State} phase.</p>
-					<p>It is {game.Turn}'s turn.</p>
+					{game.State === 'PLAYING' ? (<p>It is {game.Turn}'s turn.</p>) : game.State === 'GAME_OVER' ? (<p>{game.Turn} won!</p>) : null}
+
 					{makeMoveMutation.isError && <p className="text-red-700">Invalid move! {''+makeMoveMutation.error}</p>}
 					{makeMoveMutation.isPending && <p>Submitting move...</p>}
 					<Board

@@ -12,9 +12,11 @@ func createLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
 
 	lobbyId := uuid.NewString()
-	lobbies[lobbyId] = &Lobby{
+
+	CreateLobby(lobbyId, &Lobby{
+		LobbyId: lobbyId,
 		Player1: id,
-	}
+	})
 
 	w.Write([]byte(lobbyId))
 }
@@ -23,43 +25,67 @@ func joinLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
 
 	if !r.URL.Query().Has("lobbyId") {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("Invalid Lobby ID!"))
+		http.Error(w, "Invalid Lobby ID!", http.StatusBadRequest)
 		return
 	}
 
-	lobby := lobbies[r.URL.Query().Get("lobbyId")]
+	lobby := GetLobbies()[r.URL.Query().Get("lobbyId")]
 
 	if lobby == nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("Invalid lobby ID!"))
+		http.Error(w, "Invalid lobby ID!", http.StatusBadRequest)
 		return
 	}
 
-	lobby.Player2 = id
-	lobby.Game = NewGame()
+	lobby.SetPlayer2(id)
+	lobby.SetGame(NewGame())
 
 	w.WriteHeader(http.StatusOK)
-	lobby.broadcastLobby()
+	lobby.BroadcastGameUpdate()
+}
+
+func leaveLobbyHandler(w http.ResponseWriter, r *http.Request) {
+	id := r.Context().Value("id").(string)
+
+	lobby := GetLobbyWithPlayerId(id)
+
+	if lobby == nil {
+		http.Error(w, "Player is not in any lobby!", http.StatusBadRequest)
+		return
+	}
+
+	lobby.mu.Lock()
+	defer lobby.mu.Unlock()
+
+	if lobby.Player1 == id {
+		if lobby.Player2 == nil {
+			RemoveLobby(lobby.LobbyId)
+		} else {
+			lobby.Player1 = *lobby.Player2
+		}
+	}
+
+	lobby.Player2 = nil
+
+	GetPlayer(lobby.Player1).WriteJSON(LobbyEventMessage{
+		Event: OpponentLeft,
+		Game:  lobby.Game,
+	})
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
 
-	var lobby *Lobby
-	for _, activeLobby := range lobbies {
-		if activeLobby.Player1 == id || activeLobby.Player2 == id {
-			lobby = activeLobby
-		}
-	}
+	lobby := GetLobbyWithPlayerId(id)
 
 	if lobby == nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Current player is not in a lobby!"))
+		http.Error(w, "Current player is not in a lobby!", http.StatusBadRequest)
 		return
 	}
+
+	lobby.mu.Lock()
+	defer lobby.mu.Unlock()
 
 	var playerMakingRequest player.Player
 	if lobby.Player1 == id {
@@ -104,7 +130,7 @@ func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
 	lobby.Game = &newGame
 
 	w.WriteHeader(http.StatusOK)
-	lobby.broadcastLobby()
+	lobby.BroadcastGameUpdate()
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {

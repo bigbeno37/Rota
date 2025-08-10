@@ -17,6 +17,7 @@ func main() {
 	authenticatedMux := http.NewServeMux()
 	authenticatedMux.HandleFunc("POST /api/create-lobby", createLobbyHandler)
 	authenticatedMux.HandleFunc("POST /api/join-lobby", joinLobbyHandler)
+	authenticatedMux.HandleFunc("POST /api/leave-lobby", leaveLobbyHandler)
 	authenticatedMux.HandleFunc("POST /api/make-move", makeMoveHandler)
 
 	mainMux := http.NewServeMux()
