@@ -2,7 +2,6 @@ package main
 
 import (
 	"backend/player"
-	"backend/position"
 	"fmt"
 	"github.com/google/uuid"
 	"net/http"
@@ -21,14 +20,7 @@ func createLobbyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func joinLobbyHandler(w http.ResponseWriter, r *http.Request) {
-	idCookie, err := r.Cookie("id")
-
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("ID cookie is not present. Connect to the WebSocket server first!"))
-		return
-	}
+	id := r.Context().Value("id").(string)
 
 	if !r.URL.Query().Has("lobbyId") {
 		w.WriteHeader(http.StatusBadRequest)
@@ -46,7 +38,7 @@ func joinLobbyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lobby.Player2 = idCookie.Value
+	lobby.Player2 = id
 	lobby.Game = NewGame()
 
 	w.WriteHeader(http.StatusOK)
@@ -69,103 +61,46 @@ func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var currentPlayer player.Player
+	var playerMakingRequest player.Player
 	if lobby.Player1 == id {
-		currentPlayer = player.Player1
+		playerMakingRequest = player.Player1
 	} else {
-		currentPlayer = player.Player2
+		playerMakingRequest = player.Player2
 	}
 
 	game := lobby.Game
-	if ((*game).Turn == player.Player1 && lobby.Player1 != id) || (game.Turn == player.Player2 && lobby.Player2 != id) {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("It is not your Turn!"))
-		fmt.Println("Invalid turn", game.Turn, "id", id, "players:", lobby.Player1, lobby.Player2)
-		return
-	}
 
-	to := r.URL.Query().Get("to")
-
-	targetPosition, _ := strconv.Atoi(to)
-
-	board := game.Board
-	if board[targetPosition] != position.Empty {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Target position must be empty!"))
-		return
-	}
-
-	if game.State == Setup {
-		if currentPlayer == player.Player1 {
-			board[targetPosition] = position.Player1
-			game.Turn = player.Player2
+	var from *int = nil
+	rawFrom := r.URL.Query().Get("from")
+	if len(rawFrom) > 0 {
+		if initialPosition, err := strconv.Atoi(rawFrom); err == nil {
+			from = &initialPosition
 		} else {
-			board[targetPosition] = position.Player2
-			game.Turn = player.Player1
-		}
-
-		emptyCount := 0
-		for _, pos := range board {
-			if pos == position.Empty {
-				emptyCount++
-			}
-		}
-
-		if emptyCount == 3 {
-			game.State = Playing
-		}
-	} else if game.State == Playing {
-		from := r.URL.Query().Get("from")
-		initialPosition, _ := strconv.Atoi(from)
-
-		if currentPlayer == player.Player1 {
-			if board[initialPosition] != position.Player1 {
-				w.WriteHeader(http.StatusBadRequest)
-				w.Write([]byte("Initial position must belong to one of your pieces!"))
-				return
-			}
-
-			board[initialPosition] = position.Empty
-			board[targetPosition] = position.Player1
-			game.Turn = player.Player2
-		} else if currentPlayer == player.Player2 {
-			if board[initialPosition] != position.Player2 {
-				w.WriteHeader(http.StatusBadRequest)
-				w.Write([]byte("Initial position must belong to one of your pieces!"))
-				return
-			}
-
-			board[initialPosition] = position.Empty
-			board[targetPosition] = position.Player2
-			game.Turn = player.Player1
+			http.Error(w, "Invalid 'from' parameter, must be an integer", http.StatusBadRequest)
+			return
 		}
 	}
 
-	// TODO: Implement defensive checks
-	//if len(to) == 0 {
-	//	w.WriteHeader(http.StatusBadRequest)
-	//	w.Write([]byte("Expected a \"to\" query parameter!"))
-	//	return
-	//}
-	//
-	//targetPosition, err := strconv.Atoi(to)
-	//
-	//if err != nil {
-	//	w.WriteHeader(http.StatusBadRequest)
-	//	w.Write([]byte("\"to\" must be an integer!"))
-	//	return
-	//}
-	//
-	//if targetPosition < 0 || targetPosition > 8 {
-	//	w.WriteHeader(http.StatusBadRequest)
-	//	w.Write([]byte("\"to\" must be an integer between 0 and 8!"))
-	//	return
-	//}
-	//
-	//if lobby.Game.State == Setup {
-	//
-	//}
+	var to int
+	rawTo := r.URL.Query().Get("to")
+	if len(rawTo) > 0 {
+		if targetPosition, err := strconv.Atoi(rawTo); err == nil {
+			to = targetPosition
+		} else {
+			http.Error(w, "Invalid 'to' parameter, must be an integer", http.StatusBadRequest)
+			return
+		}
+	} else {
+		http.Error(w, "Missing required 'to' parameter, must be an integer", http.StatusBadRequest)
+		return
+	}
+
+	newGame, err := game.EvaluateMove(playerMakingRequest, PlayerMove{from: from, to: to})
+	if err != nil {
+		http.Error(w, "Invalid move. Cause: "+err.Error(), http.StatusBadRequest)
+	}
+
+	lobby.Game = &newGame
 
 	w.WriteHeader(http.StatusOK)
 	lobby.broadcastLobby()
