@@ -10,18 +10,11 @@ import (
 )
 
 func createLobbyHandler(w http.ResponseWriter, r *http.Request) {
-	idCookie, err := r.Cookie("id")
-
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("ID cookie is not present. Connect to the WebSocket server first!"))
-		return
-	}
+	id := r.Context().Value("id").(string)
 
 	lobbyId := uuid.NewString()
 	lobbies[lobbyId] = &Lobby{
-		Player1: idCookie.Value,
+		Player1: id,
 	}
 
 	w.Write([]byte(lobbyId))
@@ -61,16 +54,9 @@ func joinLobbyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
-	idCookie, err := r.Cookie("id")
-
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("ID cookie is not present. Connect to the WebSocket server first!"))
-		return
-	}
+	id := r.Context().Value("id").(string)
 
 	var lobby *Lobby
-	id := idCookie.Value
 	for _, activeLobby := range lobbies {
 		if activeLobby.Player1 == id || activeLobby.Player2 == id {
 			lobby = activeLobby
