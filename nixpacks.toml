@@ -23,10 +23,10 @@ cmds = [
 [phases.build]
 # Build the frontend first, then the Go backend
 cmds = [
-    "npm run build",  # This should build Vite into the backend's dist directory
-    "go build -o app ."
+    "cd frontend && npm run build",  # This should build Vite into the backend's dist directory
+    "cd backend && go build -o app ."
 ]
 
 [start]
 # Start the Go server which will serve both the API and static files
-cmd = "./app"
+cmd = "./backend/app"
