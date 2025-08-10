@@ -23,7 +23,7 @@ cmds = [
 [phases.build]
 # Build the frontend first, then the Go backend
 cmds = [
-    "npm --prefix ./frontend run build",  # This should build Vite into the backend's dist directory
+    "npm --prefix ./frontend run build:no-ts",  # This should build Vite into the backend's dist directory
     "go build -o ./backend/app -C ./backend ."
 ]
 
