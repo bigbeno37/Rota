@@ -1,0 +1,11 @@
+{
+  "build": {
+    "commands": [
+      "cd frontend && npm install && npm run build",
+      "cd backend && go build -o app ."
+    ]
+  },
+  "deploy": {
+    "startCommand": "cd backend && ./app"
+  }
+}
