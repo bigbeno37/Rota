@@ -98,6 +98,7 @@ func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
 	newGame, err := game.EvaluateMove(playerMakingRequest, PlayerMove{from: from, to: to})
 	if err != nil {
 		http.Error(w, "Invalid move. Cause: "+err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	lobby.Game = &newGame
