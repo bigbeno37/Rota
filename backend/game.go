@@ -53,6 +53,7 @@ const (
 	SourceOutOfBounds                       = "SOURCE_OUT_OF_BOUNDS"
 	SourceDoesNotBelongToPlayer             = "SOURCE_DOES_NOT_BELONG_PLAYER"
 	InvalidTarget                           = "INVALID_TARGET"
+	GameIsOver                              = "GAME_IS_OVER"
 )
 
 type InvalidMoveError struct {
@@ -63,6 +64,34 @@ func (e *InvalidMoveError) Error() string {
 	return string(e.cause)
 }
 
+func (game *Game) PlayerHasWon(p player.Player) bool {
+	pos := p.AsPosition()
+
+	hasDiagonalVictory := false
+	for i := 8; i > 4; i-- {
+		if game.Board[i] == pos && game.Board[0] == pos && game.Board[i-4] == pos {
+			hasDiagonalVictory = true
+		}
+	}
+
+	hasRowVictory := false
+	for i := 1; i <= 6; i++ {
+		if game.Board[i] == pos && game.Board[i+1] == pos && game.Board[i+2] == pos {
+			hasRowVictory = true
+		}
+	}
+
+	if game.Board[7] == pos && game.Board[8] == pos && game.Board[1] == pos {
+		hasRowVictory = true
+	}
+
+	if game.Board[8] == pos && game.Board[1] == pos && game.Board[2] == pos {
+		hasRowVictory = true
+	}
+
+	return hasDiagonalVictory || hasRowVictory
+}
+
 func (currentGame *Game) EvaluateMove(p player.Player, move PlayerMove) (Game, error) {
 	existingBoard := make([]position.Position, len(currentGame.Board))
 	copy(existingBoard, currentGame.Board)
@@ -70,6 +99,10 @@ func (currentGame *Game) EvaluateMove(p player.Player, move PlayerMove) (Game, e
 		State: currentGame.State,
 		Turn:  currentGame.Turn,
 		Board: existingBoard,
+	}
+
+	if game.State == GameOver {
+		return game, &InvalidMoveError{cause: GameIsOver}
 	}
 
 	if game.Turn != p {
@@ -94,6 +127,18 @@ func (currentGame *Game) EvaluateMove(p player.Player, move PlayerMove) (Game, e
 	pos := p.AsPosition()
 	if game.State == Setup {
 		game.Board[move.to] = pos
+
+		// Rare case where players set up into a winning position
+		if game.PlayerHasWon(p) || game.PlayerHasWon(nextPlayer) {
+			game.State = GameOver
+
+			if game.PlayerHasWon(nextPlayer) {
+				game.Turn = nextPlayer
+			}
+
+			return game, nil
+		}
+
 		game.Turn = nextPlayer
 
 		emptyCount := 0
@@ -132,29 +177,7 @@ func (currentGame *Game) EvaluateMove(p player.Player, move PlayerMove) (Game, e
 		game.Board[from] = position.Empty
 		game.Board[move.to] = pos
 
-		hasDiagonalVictory := false
-		for i := 8; i > 4; i-- {
-			if game.Board[i] == pos && game.Board[0] == pos && game.Board[i-4] == pos {
-				hasDiagonalVictory = true
-			}
-		}
-
-		hasRowVictory := false
-		for i := 1; i <= 6; i++ {
-			if game.Board[i] == pos && game.Board[i+1] == pos && game.Board[i+2] == pos {
-				hasRowVictory = true
-			}
-		}
-
-		if game.Board[7] == pos && game.Board[8] == pos && game.Board[1] == pos {
-			hasRowVictory = true
-		}
-
-		if game.Board[8] == pos && game.Board[1] == pos && game.Board[2] == pos {
-			hasRowVictory = true
-		}
-
-		if hasDiagonalVictory || hasRowVictory {
+		if game.PlayerHasWon(p) {
 			game.State = GameOver
 		} else {
 			game.Turn = nextPlayer
