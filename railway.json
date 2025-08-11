@@ -1,0 +1,19 @@
+{
+  "steps": {
+    "install": {
+      "commands": [
+        "cd frontend && npm install",
+        "cd backend && go module install"
+      ]
+    },
+    "build": {
+      "commands": [
+        "cd frontend && npm run build",
+        "cd backend && go build -o app ."
+      ]
+    }
+  },
+  "deploy": {
+    "startCommand": "cd backend && ./app"
+  }
+}
