@@ -5,6 +5,7 @@ import (
 	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
+	"os"
 )
 
 var upgrader = websocket.Upgrader{
@@ -27,9 +28,14 @@ func main() {
 		CreateStack(getCookieMiddleware)(authenticatedMux),
 	)
 
-	fmt.Println("WebSocket server listening on port 8080!")
+	port := "8080"
+	if portNum, exists := os.LookupEnv("PORT"); exists == true {
+		port = portNum
+	}
+
+	fmt.Println("WebSocket server listening on port " + port)
 	log.Fatal(http.ListenAndServe(
-		":8080",
+		"0.0.0.0:"+port,
 		mainMux,
 	))
 }
