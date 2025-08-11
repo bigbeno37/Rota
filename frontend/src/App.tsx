@@ -8,6 +8,8 @@ import {Board} from '@/Board.tsx';
 import type {Game} from '@/types.ts';
 import {useWS} from '@/hooks/useWS.ts';
 
+export const api = (str: string) => `http://localhost:8080${str}`;
+
 export function App() {
 	const [game, setGame] = useState<Game | null>(null);
 	const wsStatus = useWS(message => {
@@ -23,7 +25,7 @@ export function App() {
 
 	const createLobbyMutation = useMutation({
 		mutationFn: () => {
-			return throwIfNotOk(fetch('/api/create-lobby', {
+			return throwIfNotOk(fetch(api('/api/create-lobby'), {
 				method: 'POST',
 			}));
 		}
@@ -31,7 +33,7 @@ export function App() {
 
 	const joinLobbyMutation = useMutation({
 		mutationFn: () => {
-			return throwIfNotOk(fetch(`/api/join-lobby?lobbyId=${lobbyId}`, {
+			return throwIfNotOk(fetch(api(`/api/join-lobby?lobbyId=${lobbyId}`), {
 				method: 'POST',
 			}));
 		}
@@ -41,7 +43,7 @@ export function App() {
 
 	const makeMoveMutation = useMutation({
 		mutationFn: (opts: { from?: number, to: number }) => {
-			return throwIfNotOk(fetch(`/api/make-move?from=${opts.from ?? -1}&to=${opts.to}`, {
+			return throwIfNotOk(fetch(api(`/api/make-move?from=${opts.from ?? -1}&to=${opts.to}`), {
 				method: 'POST'
 			}));
 		},
@@ -88,7 +90,7 @@ export function App() {
 
 	const leaveLobbyMutation = useMutation({
 		mutationFn: () => {
-			return throwIfNotOk(fetch('/api/leave-lobby', {
+			return throwIfNotOk(fetch(api('/api/leave-lobby'), {
 				method: 'POST'
 			}))
 		},
