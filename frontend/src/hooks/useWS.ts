@@ -13,7 +13,7 @@ export const useWS = (onMessage: (message: LobbyEventMessage) => void) => {
 	}>({state: 'LOADING'});
 
 	useEffect(() => {
-		const connection = new WebSocket('http://localhost:8080/ws');
+		const connection = new WebSocket(import.meta.env.VITE_WS_SERVER_URL ?? 'ws://localhost:8080/ws');
 
 		connection.addEventListener('open', () => setWsStatus({state: 'CONNECTED'}));
 		connection.addEventListener('error', e => setWsStatus({state: 'ERROR', error: e}));

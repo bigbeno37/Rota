@@ -11,3 +11,5 @@ export function throwIfNotOk(fetchCall: Promise<Response>) {
 				});
 		});
 }
+
+export const api = (str: string) => import.meta.env.VITE_SERVER_URL ?? `http://localhost:8080${str}`;

@@ -3,12 +3,10 @@ import {Button} from '@/components/ui/button.tsx';
 import {Label} from '@/components/ui/label.tsx';
 import {Input} from '@/components/ui/input.tsx';
 import {useMutation} from '@tanstack/react-query';
-import {throwIfNotOk} from '@/utils.ts';
+import {api, throwIfNotOk} from '@/utils.ts';
 import {Board} from '@/Board.tsx';
 import type {Game} from '@/types.ts';
 import {useWS} from '@/hooks/useWS.ts';
-
-export const api = (str: string) => `http://localhost:8080${str}`;
 
 export function App() {
 	const [game, setGame] = useState<Game | null>(null);
