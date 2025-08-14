@@ -23,24 +23,28 @@
     # health check for railway
     rewrite /health /*
 
-    # serve from the 'dist' folder (Vite builds into the 'dist' folder)
-    root * dist
+	# serve from the 'dist' folder (Vite builds into the 'dist' folder)
+	root * dist
 
-    # enable gzipping responses
-    encode gzip
+	# enable gzipping responses
+	encode gzip
 
-    # Handle API and WebSocket routes first (before file serving)
-    handle /api/* {
-        reverse_proxy {$SERVER_URL}
-    }
+	# Handle API and WebSocket routes first (before file serving)
+	handle /api/* {
+		reverse_proxy {$SERVER_URL}
+	}
 
-    handle /ws {
-        reverse_proxy {$WS_SERVER_URL}
-    }
+	handle /ws {
+		reverse_proxy {$SERVER_URL}
+	}
 
-    # Handle static files and SPA routing
-    handle {
-        file_server
-        try_files {path} /index.html
-    }
+	handle /health {
+	    reverse_proxy {$SERVER_URL}
+	}
+
+	# Handle static files and SPA routing
+	handle {
+		file_server
+		try_files {path} /index.html
+	}
 }

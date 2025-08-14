@@ -22,6 +22,9 @@ func main() {
 	authenticatedMux.HandleFunc("POST /api/make-move", makeMoveHandler)
 
 	mainMux := http.NewServeMux()
+	mainMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 	mainMux.HandleFunc("/ws", wsHandler)
 	mainMux.Handle(
 		"/",
