@@ -1,111 +1,171 @@
 package main
 
 import (
-	"backend/player"
-	"fmt"
+	"backend/turn"
 	"github.com/google/uuid"
+	"log/slog"
 	"net/http"
 	"strconv"
 )
 
 func createLobbyHandler(w http.ResponseWriter, r *http.Request) {
+	logger := r.Context().Value("logger").(*slog.Logger)
 	id := r.Context().Value("id").(string)
-	fmt.Println("/create-lobby - User " + id)
+	state := NewGlobalStateManager(logger)
 
 	lobbyId := uuid.NewString()
-
-	CreateLobby(lobbyId, &Lobby{
+	state.CreateLobby(lobbyId, &Lobby{
 		LobbyId: lobbyId,
 		Player1: id,
 	})
+
+	player := state.GetPlayerWithId(id)
+	player.SetLobby(&lobbyId)
 
 	w.Write([]byte(lobbyId))
 }
 
 func joinLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
-	fmt.Println("/join-lobby - User " + id)
+	logger := r.Context().Value("logger").(*slog.Logger)
+	state := NewGlobalStateManager(logger)
 
 	if !r.URL.Query().Has("lobbyId") {
+		logger.Debug("Missing 'lobbyId' query parameter")
 		http.Error(w, "No lobbyId present in request", http.StatusBadRequest)
 		return
 	}
 
-	lobby := GetLobbies()[r.URL.Query().Get("lobbyId")]
+	lobbyId := r.URL.Query().Get("lobbyId")
+	lobbyWithId := state.GetLobbyWithId(lobbyId)
 
-	if lobby == nil {
+	if lobbyWithId == nil {
+		logger.Debug("No lobby with ID " + lobbyId + " found")
 		http.Error(w, "Invalid lobby ID!", http.StatusBadRequest)
 		return
 	}
 
-	lobby.SetPlayer2(id)
+	logger = logger.With("lobbyId", lobbyId)
+
+	player := state.GetPlayerWithId(id)
+	player.SetLobby(&lobbyId)
+
+	lobby := NewLobbyManager(lobbyWithId, logger)
+
+	lobby.SetPlayer2(&id)
 	lobby.SetGame(NewGame())
 
 	w.WriteHeader(http.StatusOK)
-	lobby.BroadcastGameUpdate()
+
+	logger.Info("Broadcasting lobby update to players")
+	lobby.Broadcast(&LobbyEventMessage{
+		Event: GameUpdate,
+		Game:  lobby.Game(),
+	})
 }
 
 func leaveLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
-	fmt.Println("/leave-lobby - User " + id)
+	logger := r.Context().Value("logger").(*slog.Logger)
+	state := NewGlobalStateManager(logger)
 
-	lobby := GetLobbyWithPlayerId(id)
+	player := state.GetPlayerWithId(id)
 
-	if lobby == nil {
+	if player.currentLobby == nil {
 		http.Error(w, "Player is not in any lobby!", http.StatusBadRequest)
 		return
 	}
 
-	fmt.Println("/leave-lobby - User " + id + " - Attempting to get lobby lock...")
-	lobby.mu.Lock()
-	fmt.Println("/leave-lobby - User " + id + " - Lobby lock obtained")
-	defer lobby.mu.Unlock()
-	defer fmt.Println("/leave-lobby - User " + id + " - Lobby lock released")
+	lobbyWithId := state.GetLobbyWithId(*player.currentLobby)
+	if lobbyWithId == nil {
+		logger.Warn("Player " + id + " is in lobby " + *player.currentLobby + " that no longer exists. Removing lobby ID from player...")
 
-	if lobby.Player1 == id {
-		if lobby.Player2 == nil {
-			RemoveLobby(lobby.LobbyId)
-		} else {
-			lobby.Player1 = *lobby.Player2
-		}
+		player.SetLobby(nil)
+
+		http.Error(w, "Player lobby no longer exists", http.StatusBadRequest)
+		return
 	}
 
-	lobby.Player2 = nil
+	logger = logger.With("lobbyId", lobbyWithId.LobbyId)
 
-	GetPlayer(lobby.Player1).WriteJSON(LobbyEventMessage{
-		Event: OpponentLeft,
-		Game:  lobby.Game,
-	})
+	lobby := NewLobbyManager(lobbyWithId, logger)
+
+	hasOpponent := false
+	if lobby.Player1() == id {
+		if lobby.Player2() == nil {
+			logger.Debug("Player was the only user in lobby, deleting lobby...")
+			state.RemoveLobby(lobby.lobby.LobbyId)
+			player.SetLobby(nil)
+		} else {
+			logger.Debug("Second player exists, making them the lobby owner and leaving the lobby...")
+			lobby.SetPlayer1(*lobby.Player2())
+			lobby.SetPlayer2(nil)
+
+			hasOpponent = true
+		}
+	} else {
+		logger.Debug("Identified as player 2 in lobby, leaving...")
+		lobby.SetPlayer2(nil)
+		player.SetLobby(nil)
+
+		hasOpponent = true
+	}
+
+	logger.Debug("User has left lobby")
+
+	if hasOpponent {
+		opponent := state.GetPlayerWithId(lobby.Player1())
+		logger.Info("Sending update to user " + opponent.id)
+		opponent.SendMessage(&LobbyEventMessage{
+			Event: OpponentLeft,
+			Game:  lobby.Game(),
+		}, logger)
+	}
 
 	w.WriteHeader(http.StatusOK)
 }
 
 func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
-	fmt.Println("/make-move - User " + id)
+	logger := r.Context().Value("logger").(*slog.Logger)
+	state := NewGlobalStateManager(logger)
 
-	lobby := GetLobbyWithPlayerId(id)
-
-	if lobby == nil {
-		http.Error(w, "Current player is not in a lobby!", http.StatusBadRequest)
+	player := state.GetPlayerWithId(id)
+	if player == nil {
+		logger.Warn("ID cookie present but no player found for ID " + id)
+		http.Error(w, "Player not found. Please refresh your connection.", http.StatusInternalServerError)
 		return
 	}
 
-	evalGame := func() *Game {
-		fmt.Println("/make-move - User " + id + " - Attempting to get lobby read lock...")
-		lobby.mu.RLock()
-		fmt.Println("/make-move - User " + id + " - Lobby read lock obtained")
-		defer lobby.mu.RUnlock()
-		defer fmt.Println("/make-move - User " + id + " - Lobby read lock released")
+	if player.currentLobby == nil {
+		logger.Debug("Player " + id + " is not in any lobby")
+		http.Error(w, "Player is not in any lobby!", http.StatusBadRequest)
+		return
+	}
 
-		var playerMakingRequest player.Player
-		if lobby.Player1 == id {
-			playerMakingRequest = player.Player1
+	lobbyWithId := state.GetLobbyWithId(*player.currentLobby)
+	if lobbyWithId == nil {
+		logger.Warn("Player " + id + " is in lobby " + *player.currentLobby + " that no longer exists. Removing lobby ID from player...")
+
+		player.SetLobby(nil)
+
+		http.Error(w, "Player lobby no longer exists", http.StatusBadRequest)
+		return
+	}
+
+	logger = logger.With("lobbyId", lobbyWithId.LobbyId)
+
+	lobby := NewLobbyManager(lobbyWithId, logger)
+
+	evalGame := func() *Game {
+		var playerMakingRequest turn.Turn
+		if lobby.Player1() == id {
+			playerMakingRequest = turn.Player1
 		} else {
-			playerMakingRequest = player.Player2
+			playerMakingRequest = turn.Player2
 		}
 
-		game := lobby.Game
+		game := lobby.Game()
 
 		var from *int = nil
 		rawFrom := r.URL.Query().Get("from")
@@ -150,10 +210,17 @@ func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
 	lobby.SetGame(newGame)
 
 	w.WriteHeader(http.StatusOK)
-	lobby.BroadcastGameUpdate()
+	logger.Info("Broadcasting updated game")
+	lobby.Broadcast(&LobbyEventMessage{
+		Event: GameUpdate,
+		Game:  lobby.Game(),
+	})
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
+	logger := r.Context().Value("logger").(*slog.Logger)
+	state := NewGlobalStateManager(logger)
+
 	var id string
 	idCookie, err := r.Cookie("id")
 	if err != nil {
@@ -169,13 +236,13 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, w.Header())
 	if err != nil {
-		fmt.Println("Failed to upgrade connection:", err)
+		logger.Info("Failed to upgrade connection: " + err.Error())
 		return
 	}
 	//defer conn.Close()
 
-	players[id] = conn
-	fmt.Printf("%s connected\n", id)
+	logger.Info("New player connected!")
+	state.CreatePlayer(id, NewPlayer(id, conn))
 
 	//for {
 	//	messageType, message, err := conn.ReadMessage()

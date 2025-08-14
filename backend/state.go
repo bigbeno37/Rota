@@ -1,8 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"github.com/gorilla/websocket"
+	"log/slog"
 	"sync"
 )
 
@@ -11,62 +10,59 @@ var (
 	lobbies   = map[string]*Lobby{}
 
 	playersMu sync.RWMutex
-	players   = map[string]*websocket.Conn{}
+	players   = map[string]*Player{}
 )
 
-func CreateLobby(lobbyId string, lobby *Lobby) {
+type GlobalStateManager struct {
+	logger *slog.Logger
+}
+
+func NewGlobalStateManager(logger *slog.Logger) *GlobalStateManager {
+	return &GlobalStateManager{
+		logger: logger,
+	}
+}
+
+func (manager *GlobalStateManager) CreateLobby(lobbyId string, lobby *Lobby) {
+	log := manager.logger
+
 	lobbiesMu.Lock()
 	defer lobbiesMu.Unlock()
 
 	lobbies[lobbyId] = lobby
+	log.Debug("Lobby " + lobbyId + " now active with user " + lobby.Player1)
 }
 
-func GetLobbies() map[string]*Lobby {
-	lobbiesMu.RLock()
-	defer lobbiesMu.RUnlock()
+func (manager *GlobalStateManager) CreatePlayer(id string, player *Player) {
+	log := manager.logger
 
-	return lobbies
+	playersMu.Lock()
+	defer playersMu.Unlock()
+
+	players[id] = player
+	log.Debug("Created player with id " + id)
 }
 
-func GetLobbyWithPlayerId(playerId string) *Lobby {
-	fmt.Println("GetLobbyWithPlayerId: Attempting to get read lock on global lobbies...")
-	lobbiesMu.RLock()
-	fmt.Println("GetLobbyWithPlayerId: Read lock acquired!")
-	defer lobbiesMu.RUnlock()
-	defer fmt.Println("GetLobbyWithPlayerId: Read lock released")
+func (manager *GlobalStateManager) RemoveLobby(lobbyId string) {
+	log := manager.logger
 
-	fmt.Println("GetLobbyWithPlayerId: Searching lobbies...")
-	for _, lobby := range lobbies {
-		if lobby.Player1 == playerId {
-			fmt.Println("GetLobbyWithPlayerId: Found lobby " + lobby.LobbyId + " with player " + playerId)
-			return lobby
-		}
-
-		if lobby.Player2 != nil {
-			if *lobby.Player2 == playerId {
-				fmt.Println("GetLobbyWithPlayerId: Found lobby " + lobby.LobbyId + " with player " + playerId)
-				return lobby
-			}
-		}
-	}
-
-	fmt.Println("GetLobbyWithPlayerId: No lobbies found. Returning nil...")
-	return nil
-}
-
-func RemoveLobby(lobbyId string) {
 	lobbiesMu.Lock()
 	defer lobbiesMu.Unlock()
 
 	delete(lobbies, lobbyId)
+	log.Debug("Lobby " + lobbyId + " removed from lobbies")
 }
 
-func GetPlayer(playerId string) *websocket.Conn {
-	fmt.Println("GetPlayer: Attempting to get read lock on global players...")
+func (manager *GlobalStateManager) GetLobbyWithId(lobbyId string) *Lobby {
+	lobbiesMu.RLock()
+	defer lobbiesMu.RUnlock()
+
+	return lobbies[lobbyId]
+}
+
+func (manager *GlobalStateManager) GetPlayerWithId(playerId string) *Player {
 	playersMu.RLock()
-	fmt.Println("GetPlayer: Read lock obtained!")
 	defer playersMu.RUnlock()
-	defer fmt.Println("GetPlayer: Read lock released")
 
 	return players[playerId]
 }

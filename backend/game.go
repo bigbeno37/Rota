@@ -1,8 +1,8 @@
 package main
 
 import (
-	"backend/player"
 	"backend/position"
+	"backend/turn"
 	"math"
 )
 
@@ -16,14 +16,14 @@ const (
 
 type Game struct {
 	State GameState
-	Turn  player.Player
+	Turn  turn.Turn
 	Board []position.Position
 }
 
 func NewGame() *Game {
 	return &Game{
 		State: Setup,
-		Turn:  player.Player1,
+		Turn:  turn.Player1,
 		Board: []position.Position{
 			position.Empty,
 			position.Empty,
@@ -64,7 +64,7 @@ func (e *InvalidMoveError) Error() string {
 	return string(e.cause)
 }
 
-func (game *Game) PlayerHasWon(p player.Player) bool {
+func (game *Game) PlayerHasWon(p turn.Turn) bool {
 	pos := p.AsPosition()
 
 	hasDiagonalVictory := false
@@ -92,7 +92,7 @@ func (game *Game) PlayerHasWon(p player.Player) bool {
 	return hasDiagonalVictory || hasRowVictory
 }
 
-func (currentGame *Game) EvaluateMove(p player.Player, move PlayerMove) (Game, error) {
+func (currentGame *Game) EvaluateMove(p turn.Turn, move PlayerMove) (Game, error) {
 	existingBoard := make([]position.Position, len(currentGame.Board))
 	copy(existingBoard, currentGame.Board)
 	game := Game{
@@ -117,11 +117,11 @@ func (currentGame *Game) EvaluateMove(p player.Player, move PlayerMove) (Game, e
 		return game, &InvalidMoveError{cause: TargetIsNotEmpty}
 	}
 
-	var nextPlayer player.Player
-	if p == player.Player1 {
-		nextPlayer = player.Player2
+	var nextPlayer turn.Turn
+	if p == turn.Player1 {
+		nextPlayer = turn.Player2
 	} else {
-		nextPlayer = player.Player1
+		nextPlayer = turn.Player1
 	}
 
 	pos := p.AsPosition()

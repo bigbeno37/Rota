@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 )
 
 var upgrader = websocket.Upgrader{
@@ -31,14 +32,33 @@ func main() {
 		CreateStack(getCookieMiddleware)(authenticatedMux),
 	)
 
+	app := http.NewServeMux()
+	app.Handle(
+		"/",
+		CreateStack(withLoggerMiddleware)(mainMux),
+	)
+
 	port := "8080"
 	if portNum, exists := os.LookupEnv("PORT"); exists == true {
 		port = portNum
 	}
 
-	fmt.Println("WebSocket server listening on port " + port)
-	log.Fatal(http.ListenAndServe(
-		"0.0.0.0:"+port,
-		mainMux,
-	))
+	production := false
+	if productionValue, exists := os.LookupEnv("production"); exists == true {
+		production = strings.ToLower(productionValue) == "true"
+	}
+
+	if production {
+		fmt.Println("Production server listening on 0.0.0.0:" + port)
+		log.Fatal(http.ListenAndServe(
+			"0.0.0.0:"+port,
+			app,
+		))
+	} else {
+		fmt.Println("Development server listening on localhost:8080")
+		log.Fatal(http.ListenAndServe(
+			"localhost:8080",
+			app,
+		))
+	}
 }

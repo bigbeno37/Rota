@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"github.com/google/uuid"
+	"log/slog"
 	"net/http"
+	"os"
 )
 
 type Middleware func(http.Handler) http.Handler
@@ -35,9 +37,26 @@ func getCookieMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func MyMiddleware2(next http.Handler) http.Handler {
+func withLoggerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println("The context is", r.Context().Value("foo"))
-		next.ServeHTTP(w, r)
+		var id *string = nil
+		if r.Context().Value("id") != nil {
+			id = r.Context().Value("id").(*string)
+		}
+
+		handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		})
+
+		request := slog.Group("request", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+
+		logger := slog.New(handler).With(request, "traceId", uuid.NewString())
+
+		if id != nil {
+			logger = logger.With("id", *id)
+		}
+
+		modifiedRequest := r.WithContext(context.WithValue(r.Context(), "logger", logger))
+		next.ServeHTTP(w, modifiedRequest)
 	})
 }
