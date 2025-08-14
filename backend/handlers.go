@@ -10,6 +10,7 @@ import (
 
 func createLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
+	fmt.Println("/create-lobby - User " + id)
 
 	lobbyId := uuid.NewString()
 
@@ -23,9 +24,10 @@ func createLobbyHandler(w http.ResponseWriter, r *http.Request) {
 
 func joinLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
+	fmt.Println("/join-lobby - User " + id)
 
 	if !r.URL.Query().Has("lobbyId") {
-		http.Error(w, "Invalid Lobby ID!", http.StatusBadRequest)
+		http.Error(w, "No lobbyId present in request", http.StatusBadRequest)
 		return
 	}
 
@@ -45,6 +47,7 @@ func joinLobbyHandler(w http.ResponseWriter, r *http.Request) {
 
 func leaveLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
+	fmt.Println("/leave-lobby - User " + id)
 
 	lobby := GetLobbyWithPlayerId(id)
 
@@ -53,8 +56,11 @@ func leaveLobbyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Println("/leave-lobby - User " + id + " - Attempting to get lobby lock...")
 	lobby.mu.Lock()
+	fmt.Println("/leave-lobby - User " + id + " - Lobby lock obtained")
 	defer lobby.mu.Unlock()
+	defer fmt.Println("/leave-lobby - User " + id + " - Lobby lock released")
 
 	if lobby.Player1 == id {
 		if lobby.Player2 == nil {
@@ -76,6 +82,7 @@ func leaveLobbyHandler(w http.ResponseWriter, r *http.Request) {
 
 func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
+	fmt.Println("/make-move - User " + id)
 
 	lobby := GetLobbyWithPlayerId(id)
 
@@ -84,50 +91,63 @@ func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lobby.mu.Lock()
-	defer lobby.mu.Unlock()
+	evalGame := func() *Game {
+		fmt.Println("/make-move - User " + id + " - Attempting to get lobby read lock...")
+		lobby.mu.RLock()
+		fmt.Println("/make-move - User " + id + " - Lobby read lock obtained")
+		defer lobby.mu.RUnlock()
+		defer fmt.Println("/make-move - User " + id + " - Lobby read lock released")
 
-	var playerMakingRequest player.Player
-	if lobby.Player1 == id {
-		playerMakingRequest = player.Player1
-	} else {
-		playerMakingRequest = player.Player2
+		var playerMakingRequest player.Player
+		if lobby.Player1 == id {
+			playerMakingRequest = player.Player1
+		} else {
+			playerMakingRequest = player.Player2
+		}
+
+		game := lobby.Game
+
+		var from *int = nil
+		rawFrom := r.URL.Query().Get("from")
+		if len(rawFrom) > 0 {
+			if initialPosition, err := strconv.Atoi(rawFrom); err == nil {
+				from = &initialPosition
+			} else {
+				http.Error(w, "Invalid 'from' parameter, must be an integer", http.StatusBadRequest)
+				return nil
+			}
+		}
+
+		var to int
+		rawTo := r.URL.Query().Get("to")
+		if len(rawTo) > 0 {
+			if targetPosition, err := strconv.Atoi(rawTo); err == nil {
+				to = targetPosition
+			} else {
+				http.Error(w, "Invalid 'to' parameter, must be an integer", http.StatusBadRequest)
+				return nil
+			}
+		} else {
+			http.Error(w, "Missing required 'to' parameter, must be an integer", http.StatusBadRequest)
+			return nil
+		}
+
+		newGame, err := game.EvaluateMove(playerMakingRequest, PlayerMove{from: from, to: to})
+		if err != nil {
+			http.Error(w, "Invalid move. Cause: "+err.Error(), http.StatusBadRequest)
+			return nil
+		}
+
+		return &newGame
 	}
 
-	game := lobby.Game
+	newGame := NewGame()
 
-	var from *int = nil
-	rawFrom := r.URL.Query().Get("from")
-	if len(rawFrom) > 0 {
-		if initialPosition, err := strconv.Atoi(rawFrom); err == nil {
-			from = &initialPosition
-		} else {
-			http.Error(w, "Invalid 'from' parameter, must be an integer", http.StatusBadRequest)
-			return
-		}
-	}
-
-	var to int
-	rawTo := r.URL.Query().Get("to")
-	if len(rawTo) > 0 {
-		if targetPosition, err := strconv.Atoi(rawTo); err == nil {
-			to = targetPosition
-		} else {
-			http.Error(w, "Invalid 'to' parameter, must be an integer", http.StatusBadRequest)
-			return
-		}
-	} else {
-		http.Error(w, "Missing required 'to' parameter, must be an integer", http.StatusBadRequest)
+	if newGame == nil {
 		return
 	}
 
-	newGame, err := game.EvaluateMove(playerMakingRequest, PlayerMove{from: from, to: to})
-	if err != nil {
-		http.Error(w, "Invalid move. Cause: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	lobby.Game = &newGame
+	lobby.SetGame(evalGame())
 
 	w.WriteHeader(http.StatusOK)
 	lobby.BroadcastGameUpdate()
