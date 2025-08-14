@@ -20,9 +20,6 @@
         format json # set access log format to json mode
     }
 
-    # health check for railway
-    rewrite /health /*
-
 	# serve from the 'dist' folder (Vite builds into the 'dist' folder)
 	root * dist
 
