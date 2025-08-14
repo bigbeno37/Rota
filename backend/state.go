@@ -58,7 +58,7 @@ func RemoveLobby(lobbyId string) {
 	lobbiesMu.Lock()
 	defer lobbiesMu.Unlock()
 
-	lobbies[lobbyId] = nil
+	delete(lobbies, lobbyId)
 }
 
 func GetPlayer(playerId string) *websocket.Conn {

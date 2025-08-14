@@ -161,7 +161,7 @@ func (currentGame *Game) EvaluateMove(p player.Player, move PlayerMove) (Game, e
 			return game, &InvalidMoveError{cause: SourceOutOfBounds}
 		}
 
-		if game.Board[move.to] != pos {
+		if game.Board[*move.from] != pos {
 			return game, &InvalidMoveError{cause: SourceDoesNotBelongToPlayer}
 		}
 

@@ -141,13 +141,13 @@ func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
 		return &newGame
 	}
 
-	newGame := NewGame()
+	newGame := evalGame()
 
 	if newGame == nil {
 		return
 	}
 
-	lobby.SetGame(evalGame())
+	lobby.SetGame(newGame)
 
 	w.WriteHeader(http.StatusOK)
 	lobby.BroadcastGameUpdate()
