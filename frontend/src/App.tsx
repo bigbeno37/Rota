@@ -8,7 +8,10 @@ import {Board} from '@/Board.tsx';
 import type {Game} from '@/types.ts';
 import {useWS} from '@/hooks/useWS.ts';
 
-export function App() {
+type AppProps = {
+	lobbyId?: string
+}
+export function App(props: AppProps) {
 	const [game, setGame] = useState<Game | null>(null);
 	const wsStatus = useWS(message => {
 		if (message.Event === 'GAME_UPDATE') {
@@ -19,7 +22,7 @@ export function App() {
 	})
 
 	const [playerState, setPlayerState] = useState<'MAIN_MENU' | 'IN_LOBBY'>('MAIN_MENU');
-	const [lobbyId, setLobbyId] = useState<string | null>(null);
+	const [lobbyId, setLobbyId] = useState<string | null>(props.lobbyId ?? null);
 
 	const createLobbyMutation = useMutation({
 		mutationFn: () => {
@@ -36,6 +39,14 @@ export function App() {
 			}));
 		}
 	});
+
+	useEffect(() => {
+		if (!props.lobbyId) return;
+		if (wsStatus.state !== "CONNECTED") return;
+
+		// TODO: Second player can join lobby, but does not receive updates
+		joinLobbyMutation.mutateAsync().then(() => setPlayerState('IN_LOBBY'));
+	}, [props.lobbyId, wsStatus.state]);
 
 	const disableControls = createLobbyMutation.isPending || joinLobbyMutation.isPending;
 
@@ -94,6 +105,7 @@ export function App() {
 		},
 		onSuccess: () => {
 			setGame(null);
+			setLobbyId(null);
 			setPlayerState('MAIN_MENU');
 		}
 	});
@@ -101,6 +113,8 @@ export function App() {
 	const handleLeaveLobbyClicked = () => {
 		leaveLobbyMutation.mutate();
 	}
+
+	const joinLobbyUrl = () => `${window.location.href}join/${lobbyId}`;
 
 	if (wsStatus.state === 'LOADING') {
 		return <p>Loading...</p>;
@@ -151,7 +165,7 @@ export function App() {
 				>
 					Leave game
 				</Button>
-				{!game && (<p>Waiting for opponent to join. Lobby ID is: {lobbyId}</p>)}
+				{!game && (<p>Waiting for opponent to join. Share this link to have your opponent join: <a href={joinLobbyUrl()}>{joinLobbyUrl()}</a></p>)}
 				{game && (<>
 					<p>This is the {game.State} phase.</p>
 					{game.State === 'PLAYING' ? (<p>It is {game.Turn}'s turn.</p>) : game.State === 'GAME_OVER' ? (

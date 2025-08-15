@@ -3,6 +3,7 @@ package main
 import (
 	"backend/turn"
 	"github.com/google/uuid"
+	gonanoid "github.com/matoous/go-nanoid/v2"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -13,7 +14,7 @@ func createLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value("id").(string)
 	state := NewGlobalStateManager(logger)
 
-	lobbyId := uuid.NewString()
+	lobbyId, _ := gonanoid.Generate("abcdefghijklmnopqrstuvwxyz0123456789", 8)
 	state.CreateLobby(lobbyId, &Lobby{
 		LobbyId: lobbyId,
 		Player1: id,
