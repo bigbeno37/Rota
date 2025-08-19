@@ -18,14 +18,26 @@ var upgrader = websocket.Upgrader{
 }
 
 func main() {
-	redisUrl := "localhost:6379"
-	if redisUrlEnvVar, exists := os.LookupEnv("REDIS_URL"); exists == true {
-		redisUrl = redisUrlEnvVar
+	var redisConnectionString *string
+	if connectionString, exists := os.LookupEnv("REDIS_URL"); exists == true {
+		redisConnectionString = &connectionString
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr: redisUrl,
-	})
+	var redisClientOpts *redis.Options
+	if redisConnectionString == nil {
+		redisClientOpts = &redis.Options{
+			Addr: "localhost:6379",
+		}
+	} else {
+		opts, err := redis.ParseURL(*redisConnectionString)
+		if err != nil {
+			log.Fatal("Invalid redis connection string: " + err.Error())
+		}
+
+		redisClientOpts = opts
+	}
+
+	rdb := redis.NewClient(redisClientOpts)
 
 	redisError := rdb.Ping(context.Background()).Err()
 	if redisError != nil {
