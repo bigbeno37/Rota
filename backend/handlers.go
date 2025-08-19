@@ -74,7 +74,7 @@ func createLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := WatchWithRetries(
-		ctx,
+		r.Context(),
 		func() error {
 			return rdb.Watch(r.Context(), tx, "player:"+id)
 		},
@@ -160,7 +160,7 @@ func joinLobbyHandler(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 
-	err = WatchWithRetries(ctx, func() error {
+	err = WatchWithRetries(r.Context(), func() error {
 		return rdb.Watch(r.Context(), tx, "player:"+id, "lobby:"+lobbyId)
 	}, 5)
 

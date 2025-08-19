@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
@@ -26,7 +27,7 @@ func main() {
 		Addr: redisUrl,
 	})
 
-	redisError := rdb.Ping(ctx).Err()
+	redisError := rdb.Ping(context.Background()).Err()
 	if redisError != nil {
 		log.Fatal("Failed to connect to redis: " + redisError.Error())
 	}
