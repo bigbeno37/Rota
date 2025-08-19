@@ -18,7 +18,7 @@ export const useWS = (onMessage: (message: LobbyEventMessage) => void) => {
 		connection.addEventListener('open', () => setWsStatus({state: 'CONNECTED'}));
 		connection.addEventListener('error', e => setWsStatus({state: 'ERROR', error: e}));
 		connection.addEventListener('message', e => {
-			console.log('Received WS message', e.data);
+			console.log('Received WS message', e.data, JSON.parse(e.data));
 
 			// setGame(JSON.parse(e.data));
 			onMessage(JSON.parse(e.data));

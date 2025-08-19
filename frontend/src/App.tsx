@@ -19,7 +19,7 @@ export function App(props: AppProps) {
 		} else if (message.Event === 'OPPONENT_LEFT') {
 			setGame(null);
 		}
-	})
+	});
 
 	const [playerState, setPlayerState] = useState<'MAIN_MENU' | 'IN_LOBBY'>('MAIN_MENU');
 	const [lobbyId, setLobbyId] = useState<string | null>(props.lobbyId ?? null);
@@ -114,7 +114,7 @@ export function App(props: AppProps) {
 		leaveLobbyMutation.mutate();
 	}
 
-	const joinLobbyUrl = () => `${window.location.href}join/${lobbyId}`;
+	const joinLobbyUrl = () => `${window.location.origin}/join/${lobbyId}`;
 
 	if (wsStatus.state === 'LOADING') {
 		return <p>Loading...</p>;

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,22 @@ var upgrader = websocket.Upgrader{
 }
 
 func main() {
+	redisUrl := "localhost:6379"
+	if redisUrlEnvVar, exists := os.LookupEnv("REDIS_URL"); exists == true {
+		redisUrl = redisUrlEnvVar
+	}
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr: redisUrl,
+	})
+
+	redisError := rdb.Ping(ctx).Err()
+	if redisError != nil {
+		log.Fatal("Failed to connect to redis: " + redisError.Error())
+	}
+
+	fmt.Println("Connected to redis!")
+
 	authenticatedMux := http.NewServeMux()
 	authenticatedMux.HandleFunc("POST /api/create-lobby", createLobbyHandler)
 	authenticatedMux.HandleFunc("POST /api/join-lobby", joinLobbyHandler)
@@ -29,13 +46,19 @@ func main() {
 	mainMux.HandleFunc("/ws", wsHandler)
 	mainMux.Handle(
 		"/",
-		CreateStack(getCookieMiddleware)(authenticatedMux),
+		CreateStack(
+			WithIdMiddleware,
+			AddIdToLoggerMiddleware,
+		)(authenticatedMux),
 	)
 
 	app := http.NewServeMux()
 	app.Handle(
 		"/",
-		CreateStack(withLoggerMiddleware)(mainMux),
+		CreateStack(
+			WithLoggerMiddleware,
+			WithRedisMiddleware(rdb),
+		)(mainMux),
 	)
 
 	port := "8080"

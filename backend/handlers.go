@@ -2,34 +2,98 @@ package main
 
 import (
 	"backend/turn"
+	"context"
+	"encoding/json"
+	"errors"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	gonanoid "github.com/matoous/go-nanoid/v2"
+	"github.com/redis/go-redis/v9"
 	"log/slog"
 	"net/http"
 	"strconv"
 )
 
+func WatchWithRetries(ctx context.Context, executeWatch func() error, retryLimit int) error {
+	for i := 0; i < retryLimit; i++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		err := executeWatch()
+		if err == nil {
+			return nil
+		}
+
+		if errors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+
+		return err
+	}
+
+	return redis.TxFailedErr
+}
+
+func StrAsJson(str string) string {
+	return "\"" + str + "\""
+}
+
 func createLobbyHandler(w http.ResponseWriter, r *http.Request) {
-	logger := r.Context().Value("logger").(*slog.Logger)
-	id := r.Context().Value("id").(string)
-	state := NewGlobalStateManager(logger)
+	logger := GetLoggerFromContext(r.Context())
+	id := GetIdFromContext(r.Context())
+	rdb := GetRedisFromContext(r.Context())
 
 	lobbyId, _ := gonanoid.Generate("abcdefghijklmnopqrstuvwxyz0123456789", 8)
-	state.CreateLobby(lobbyId, &Lobby{
-		LobbyId: lobbyId,
-		Player1: id,
-	})
 
-	player := state.GetPlayerWithId(id)
-	player.SetLobby(&lobbyId)
+	logger = logger.With(slog.String("lobbyId", lobbyId))
+
+	tx := func(tx *redis.Tx) error {
+		_, err := tx.TxPipelined(r.Context(), func(pipe redis.Pipeliner) error {
+			logger.Info("Creating lobby...")
+			err := pipe.JSONSet(r.Context(), "lobby:"+lobbyId, "$", Lobby{
+				LobbyId: lobbyId,
+				Player1: id,
+			}).Err()
+
+			if err != nil {
+				return err
+			}
+
+			logger.Info("Adding player to lobby...")
+			err = pipe.JSONSet(r.Context(), "player:"+id, "$.CurrentLobby", StrAsJson(lobbyId)).Err()
+
+			if err != nil {
+				return err
+			}
+
+			return nil
+		})
+
+		return err
+	}
+
+	err := WatchWithRetries(
+		ctx,
+		func() error {
+			return rdb.Watch(r.Context(), tx, "player:"+id)
+		},
+		5,
+	)
+
+	if err != nil {
+		logger.Warn("There was an error creating the lobby: " + err.Error())
+		http.Error(w, "There was an error creating the lobby", http.StatusInternalServerError)
+		return
+	}
 
 	w.Write([]byte(lobbyId))
 }
 
 func joinLobbyHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.Context().Value("id").(string)
-	logger := r.Context().Value("logger").(*slog.Logger)
-	state := NewGlobalStateManager(logger)
+	id := GetIdFromContext(r.Context())
+	logger := GetLoggerFromContext(r.Context())
+	rdb := GetRedisFromContext(r.Context())
 
 	if !r.URL.Query().Has("lobbyId") {
 		logger.Debug("Missing 'lobbyId' query parameter")
@@ -38,189 +102,368 @@ func joinLobbyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lobbyId := r.URL.Query().Get("lobbyId")
-	lobbyWithId := state.GetLobbyWithId(lobbyId)
+	lobbyJson, err := rdb.JSONGet(r.Context(), "lobby:"+lobbyId).Result()
 
-	if lobbyWithId == nil {
+	if err != nil {
+		logger.Warn("There was an error fetching lobbies: " + err.Error())
+		http.Error(w, "There was an error fetching lobbies", http.StatusInternalServerError)
+		return
+	}
+
+	if len(lobbyJson) == 0 {
 		logger.Debug("No lobby with ID " + lobbyId + " found")
 		http.Error(w, "Invalid lobby ID!", http.StatusBadRequest)
 		return
 	}
 
+	var lobby Lobby
+	json.Unmarshal([]byte(lobbyJson), &lobby)
+
 	logger = logger.With("lobbyId", lobbyId)
 
-	player := state.GetPlayerWithId(id)
-	player.SetLobby(&lobbyId)
+	var updatedLobby Lobby
 
-	lobby := NewLobbyManager(lobbyWithId, logger)
+	tx := func(tx *redis.Tx) error {
+		_, err := tx.TxPipelined(r.Context(), func(pipe redis.Pipeliner) error {
+			err = pipe.JSONSet(r.Context(), "player:"+id, "$.CurrentLobby", StrAsJson(lobbyId)).Err()
 
-	lobby.SetPlayer2(&id)
-	lobby.SetGame(NewGame())
+			if err != nil {
+				return err
+			}
+
+			err = pipe.JSONSet(r.Context(), "lobby:"+lobbyId, "$.Player2", StrAsJson(id)).Err()
+
+			if err != nil {
+				return err
+			}
+
+			err = pipe.JSONSet(r.Context(), "lobby:"+lobbyId, "$.Game", NewGame()).Err()
+
+			if err != nil {
+				return err
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+		updatedLobbyJson, err := tx.JSONGet(r.Context(), "lobby:"+lobbyId).Result()
+		if err != nil {
+			return err
+		}
+
+		json.Unmarshal([]byte(updatedLobbyJson), &updatedLobby)
+
+		return nil
+	}
+
+	err = WatchWithRetries(ctx, func() error {
+		return rdb.Watch(r.Context(), tx, "player:"+id, "lobby:"+lobbyId)
+	}, 5)
+
+	if err != nil {
+		logger.Warn("There was an error joining lobby: " + err.Error())
+		http.Error(w, "There was an error joining lobby", http.StatusInternalServerError)
+		return
+	}
 
 	w.WriteHeader(http.StatusOK)
 
 	logger.Info("Broadcasting lobby update to players")
-	lobby.Broadcast(&LobbyEventMessage{
+	message, _ := json.Marshal(LobbyEventMessage{
 		Event: GameUpdate,
-		Game:  lobby.Game(),
+		Game:  updatedLobby.Game,
 	})
+
+	err = rdb.Publish(r.Context(), "player:"+updatedLobby.Player1, message).Err()
+
+	if err != nil {
+		logger.Warn("There was an error publishing the lobby update: " + err.Error())
+	}
+
+	err = rdb.Publish(r.Context(), "player:"+*updatedLobby.Player2, message).Err()
+
+	if err != nil {
+		logger.Warn("There was an error publishing the lobby update: " + err.Error())
+	}
 }
 
 func leaveLobbyHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.Context().Value("id").(string)
-	logger := r.Context().Value("logger").(*slog.Logger)
-	state := NewGlobalStateManager(logger)
-
-	player := state.GetPlayerWithId(id)
-
-	if player.currentLobby == nil {
-		http.Error(w, "Player is not in any lobby!", http.StatusBadRequest)
-		return
-	}
-
-	lobbyWithId := state.GetLobbyWithId(*player.currentLobby)
-	if lobbyWithId == nil {
-		logger.Warn("Player " + id + " is in lobby " + *player.currentLobby + " that no longer exists. Removing lobby ID from player...")
-
-		player.SetLobby(nil)
-
-		http.Error(w, "Player lobby no longer exists", http.StatusBadRequest)
-		return
-	}
-
-	logger = logger.With("lobbyId", lobbyWithId.LobbyId)
-
-	lobby := NewLobbyManager(lobbyWithId, logger)
+	id := GetIdFromContext(r.Context())
+	rdb := GetRedisFromContext(r.Context())
+	logger := GetLoggerFromContext(r.Context())
 
 	hasOpponent := false
-	if lobby.Player1() == id {
-		if lobby.Player2() == nil {
-			logger.Debug("Player was the only user in lobby, deleting lobby...")
-			state.RemoveLobby(lobby.lobby.LobbyId)
-			player.SetLobby(nil)
-		} else {
-			logger.Debug("Second player exists, making them the lobby owner and leaving the lobby...")
-			lobby.SetPlayer1(*lobby.Player2())
-			lobby.SetPlayer2(nil)
+	var sendUpdateToPlayerId *string
+	tx := func(tx *redis.Tx) error {
+		playerJson, err := tx.JSONGet(r.Context(), "player:"+id).Result()
 
-			hasOpponent = true
+		if err != nil {
+			return err
 		}
-	} else {
-		logger.Debug("Identified as player 2 in lobby, leaving...")
-		lobby.SetPlayer2(nil)
-		player.SetLobby(nil)
 
-		hasOpponent = true
+		var player Player
+		json.Unmarshal([]byte(playerJson), &player)
+
+		if player.CurrentLobby == nil {
+			return nil
+		}
+
+		lobbyJson, err := tx.JSONGet(r.Context(), "lobby:"+*player.CurrentLobby).Result()
+		if err != nil {
+			return err
+		}
+
+		if len(lobbyJson) == 0 {
+			logger.Warn("Player is in lobby " + *player.CurrentLobby + " that no longer exists. Removing lobby ID from player...")
+			tx.JSONSet(r.Context(), "player:"+id, "$.CurrentLobby", nil)
+
+			return nil
+		}
+
+		var lobby Lobby
+		json.Unmarshal([]byte(lobbyJson), &lobby)
+
+		_, err = tx.TxPipelined(r.Context(), func(pipe redis.Pipeliner) error {
+			hasOpponent = false
+			if lobby.Player1 == id {
+				if lobby.Player2 == nil {
+					logger.Debug("Player was the only user in lobby, deleting lobby...")
+					err = pipe.JSONDel(r.Context(), "lobby:"+lobby.LobbyId, "$").Err()
+					if err != nil {
+						return err
+					}
+
+					err = pipe.JSONSet(r.Context(), "player:"+id, "$.CurrentLobby", nil).Err()
+					if err != nil {
+						return err
+					}
+				} else {
+					logger.Debug("Second player exists, making them the lobby owner and leaving the lobby...")
+					err = pipe.JSONSet(r.Context(), "lobby:"+lobby.LobbyId, "$.Player1", StrAsJson(*lobby.Player2)).Err()
+					if err != nil {
+						return err
+					}
+
+					err = pipe.JSONSet(r.Context(), "lobby:"+lobby.LobbyId, "$.Player2", nil).Err()
+					if err != nil {
+						return err
+					}
+
+					hasOpponent = true
+					sendUpdateToPlayerId = lobby.Player2
+				}
+			} else {
+				logger.Debug("Identified as player 2 in lobby, leaving...")
+				err = pipe.JSONSet(r.Context(), "lobby:"+lobby.LobbyId, "$.Player2", nil).Err()
+				if err != nil {
+					return err
+				}
+
+				err = pipe.JSONSet(r.Context(), "player:"+id, "$.CurrentLobby", nil).Err()
+				if err != nil {
+					return err
+				}
+
+				hasOpponent = true
+				sendUpdateToPlayerId = &lobby.Player1
+			}
+
+			return nil
+		})
+
+		return err
+	}
+
+	err := WatchWithRetries(r.Context(), func() error {
+		return rdb.Watch(r.Context(), tx, "player:"+id)
+	}, 5)
+
+	if err != nil {
+		logger.Warn("There was an error leaving player lobby: " + err.Error())
+		http.Error(w, "There was an error leaving player lobby", http.StatusInternalServerError)
+		return
 	}
 
 	logger.Debug("User has left lobby")
 
-	if hasOpponent {
-		opponent := state.GetPlayerWithId(lobby.Player1())
-		logger.Info("Sending update to user " + opponent.id)
-		opponent.SendMessage(&LobbyEventMessage{
+	if hasOpponent && sendUpdateToPlayerId != nil {
+		logger.Info("Sending update to user " + *sendUpdateToPlayerId)
+		message, _ := json.Marshal(LobbyEventMessage{
 			Event: OpponentLeft,
-			Game:  lobby.Game(),
-		}, logger)
+			Game:  nil,
+		})
+
+		err = rdb.Publish(r.Context(), "player:"+*sendUpdateToPlayerId, message).Err()
+
+		if err != nil {
+			logger.Warn("There was an error publishing \"opponent left\" message: " + err.Error())
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)
 }
 
+type MakeMoveValidationError struct {
+	cause string
+}
+
+func (e MakeMoveValidationError) Error() string {
+	return e.cause
+}
+
 func makeMoveHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.Context().Value("id").(string)
-	logger := r.Context().Value("logger").(*slog.Logger)
-	state := NewGlobalStateManager(logger)
+	id := GetIdFromContext(r.Context())
+	logger := GetLoggerFromContext(r.Context())
+	rdb := GetRedisFromContext(r.Context())
 
-	player := state.GetPlayerWithId(id)
-	if player == nil {
-		logger.Warn("ID cookie present but no player found for ID " + id)
-		http.Error(w, "Player not found. Please refresh your connection.", http.StatusInternalServerError)
+	existingPlayerJson, err := rdb.JSONGet(r.Context(), "player:"+id).Result()
+
+	if err != nil {
+		logger.Warn("Unable to fetch player from redis: " + err.Error())
+		http.Error(w, "Unable to fetch player from redis", http.StatusInternalServerError)
 		return
 	}
 
-	if player.currentLobby == nil {
-		logger.Debug("Player " + id + " is not in any lobby")
-		http.Error(w, "Player is not in any lobby!", http.StatusBadRequest)
+	var existingPlayer Player
+	json.Unmarshal([]byte(existingPlayerJson), &existingPlayer)
+
+	if existingPlayer.CurrentLobby == nil {
+		http.Error(w, "The player is not in a lobby!", http.StatusBadRequest)
 		return
 	}
 
-	lobbyWithId := state.GetLobbyWithId(*player.currentLobby)
-	if lobbyWithId == nil {
-		logger.Warn("Player " + id + " is in lobby " + *player.currentLobby + " that no longer exists. Removing lobby ID from player...")
+	var from *int = nil
+	rawFrom := r.URL.Query().Get("from")
+	if len(rawFrom) > 0 {
+		if initialPosition, err := strconv.Atoi(rawFrom); err == nil {
+			from = &initialPosition
+		} else {
+			http.Error(w, "Invalid 'from' parameter, must be an integer", http.StatusBadRequest)
+			return
+		}
+	}
 
-		player.SetLobby(nil)
-
-		http.Error(w, "Player lobby no longer exists", http.StatusBadRequest)
+	var to int
+	rawTo := r.URL.Query().Get("to")
+	if len(rawTo) > 0 {
+		if targetPosition, err := strconv.Atoi(rawTo); err == nil {
+			to = targetPosition
+		} else {
+			http.Error(w, "Invalid 'to' parameter, must be an integer", http.StatusBadRequest)
+			return
+		}
+	} else {
+		http.Error(w, "Missing required 'to' parameter, must be an integer", http.StatusBadRequest)
 		return
 	}
 
-	logger = logger.With("lobbyId", lobbyWithId.LobbyId)
+	tx := func(tx *redis.Tx) error {
+		playerJson, err := tx.JSONGet(r.Context(), "player:"+id).Result()
 
-	lobby := NewLobbyManager(lobbyWithId, logger)
+		if err != nil {
+			return err
+		}
 
-	evalGame := func() *Game {
+		var player Player
+		json.Unmarshal([]byte(playerJson), &player)
+
+		if player.CurrentLobby == nil {
+			return MakeMoveValidationError{cause: "NOT_IN_LOBBY"}
+		}
+
+		if *player.CurrentLobby != *existingPlayer.CurrentLobby {
+			return MakeMoveValidationError{cause: "CONCURRENT_EDIT"}
+		}
+
+		lobbyJson, err := tx.JSONGet(r.Context(), "lobby:"+*player.CurrentLobby).Result()
+		if err != nil {
+			return err
+		}
+
+		if len(lobbyJson) == 0 {
+			tx.JSONSet(r.Context(), "player:"+id, "$.CurrentLobby", nil)
+			return MakeMoveValidationError{cause: "NOT_IN_LOBBY"}
+		}
+
+		var lobby Lobby
+		json.Unmarshal([]byte(lobbyJson), &lobby)
+
+		logger = logger.With("lobbyId", lobby.LobbyId)
+
+		if lobby.Player2 == nil {
+			return MakeMoveValidationError{cause: "WAITING_FOR_PLAYER_2"}
+		}
+
 		var playerMakingRequest turn.Turn
-		if lobby.Player1() == id {
+		if lobby.Player1 == id {
 			playerMakingRequest = turn.Player1
 		} else {
 			playerMakingRequest = turn.Player2
 		}
 
-		game := lobby.Game()
-
-		var from *int = nil
-		rawFrom := r.URL.Query().Get("from")
-		if len(rawFrom) > 0 {
-			if initialPosition, err := strconv.Atoi(rawFrom); err == nil {
-				from = &initialPosition
-			} else {
-				http.Error(w, "Invalid 'from' parameter, must be an integer", http.StatusBadRequest)
-				return nil
-			}
-		}
-
-		var to int
-		rawTo := r.URL.Query().Get("to")
-		if len(rawTo) > 0 {
-			if targetPosition, err := strconv.Atoi(rawTo); err == nil {
-				to = targetPosition
-			} else {
-				http.Error(w, "Invalid 'to' parameter, must be an integer", http.StatusBadRequest)
-				return nil
-			}
-		} else {
-			http.Error(w, "Missing required 'to' parameter, must be an integer", http.StatusBadRequest)
-			return nil
-		}
+		game := lobby.Game
 
 		newGame, err := game.EvaluateMove(playerMakingRequest, PlayerMove{from: from, to: to})
 		if err != nil {
-			http.Error(w, "Invalid move. Cause: "+err.Error(), http.StatusBadRequest)
-			return nil
+			return err
 		}
 
-		return &newGame
+		tx.JSONSet(r.Context(), "lobby:"+lobby.LobbyId, "$.Game", newGame)
+
+		return nil
 	}
 
-	newGame := evalGame()
+	err = WatchWithRetries(r.Context(), func() error {
+		return rdb.Watch(r.Context(), tx, "player:"+id, "lobby:"+*existingPlayer.CurrentLobby)
+	}, 5)
 
-	if newGame == nil {
+	if err != nil {
+		if errors.Is(err, MakeMoveValidationError{}) {
+			http.Error(w, "Unable to make move: "+err.Error(), http.StatusBadRequest)
+		} else {
+			logger.Warn("Error making move caused by: " + err.Error())
+			http.Error(w, "Error making move: "+err.Error(), http.StatusInternalServerError)
+		}
+
 		return
 	}
 
-	lobby.SetGame(newGame)
-
 	w.WriteHeader(http.StatusOK)
 	logger.Info("Broadcasting updated game")
-	lobby.Broadcast(&LobbyEventMessage{
+
+	lobbyJson, err := rdb.JSONGet(r.Context(), "lobby:"+*existingPlayer.CurrentLobby).Result()
+
+	if err != nil {
+		logger.Warn("Unable to fetch lobby from redis: " + err.Error())
+		return
+	}
+
+	var lobby Lobby
+	json.Unmarshal([]byte(lobbyJson), &lobby)
+
+	message, _ := json.Marshal(LobbyEventMessage{
 		Event: GameUpdate,
-		Game:  lobby.Game(),
+		Game:  lobby.Game,
 	})
+
+	err = rdb.Publish(r.Context(), "player:"+lobby.Player1, message).Err()
+	if err != nil {
+		logger.Warn("There was an error publishing lobby update: " + err.Error())
+	}
+
+	err = rdb.Publish(r.Context(), "player:"+*lobby.Player2, message).Err()
+	if err != nil {
+		logger.Warn("There was an error publishing lobby update: " + err.Error())
+	}
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
-	logger := r.Context().Value("logger").(*slog.Logger)
-	state := NewGlobalStateManager(logger)
+	logger := GetLoggerFromContext(r.Context())
+	redis := GetRedisFromContext(r.Context())
 
 	var id string
 	idCookie, err := r.Cookie("id")
@@ -240,23 +483,43 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		logger.Info("Failed to upgrade connection: " + err.Error())
 		return
 	}
-	//defer conn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
 
 	logger.Info("New player connected!")
-	state.CreatePlayer(id, NewPlayer(id, conn))
+	err = redis.JSONSet(r.Context(), "player:"+id, "$", &Player{
+		Id:           id,
+		CurrentLobby: nil,
+	}).Err()
 
-	//for {
-	//	messageType, message, err := conn.ReadMessage()
-	//	if err != nil {
-	//		fmt.Println("Read error:", err)
-	//		break
-	//	}
-	//
-	//	fmt.Printf("Received: %s\n", message)
-	//
-	//	if err := conn.WriteMessage(messageType, message); err != nil {
-	//		fmt.Println("Write error:", err)
-	//		break
-	//	}
-	//}
+	if err != nil {
+		logger.Warn("Failed to set player: " + err.Error())
+	}
+
+	pubsub := redis.Subscribe(r.Context(), "player:"+id)
+	defer pubsub.Close()
+	ch := pubsub.Channel()
+
+	for {
+		select {
+		case <-done:
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload)); err != nil {
+				logger.Warn("Failed to send player: " + err.Error())
+				return
+			}
+		}
+	}
 }
